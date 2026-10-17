@@ -8,7 +8,38 @@
 
 English | [简体中文](./README.md)
 
-Turns a local [OpenCode](https://opencode.ai) runtime into an OpenAI-compatible API gateway, so any client can use unlimited free OpenCode Zen models.
+## 🎉 Special Contribution: npm Global Install & User-Level Config
+
+The project now supports installing globally via npm and reading user-level config from `~/.config/opencode2api/config.json`.
+
+### npm global install (available after publish)
+
+> Note: `opencode-api-pro` is not published yet. The command below will work once published. We've pre-configured `package.json` with `bin`, `files`, `publishConfig`, etc., so it's ready to publish.
+
+```bash
+npm i -g opencode-api-pro
+# Run after install
+opencode-api-pro
+```
+
+### User-level config
+
+It's recommended to store config in your home directory:
+
+```bash
+mkdir -p ~/.config/opencode2api
+cp config.json.example ~/.config/opencode2api/config.json
+```
+
+Config loading precedence (highest → lowest):
+1. Environment variable `OPENCODE2API_CONFIG` (explicit path)
+2. Current working directory `./config.json`
+3. User-level config `~/.config/opencode2api/config.json` (XDG-aware; if `XDG_CONFIG_HOME` is set, `$XDG_CONFIG_HOME/opencode2api/config.json` is used)
+4. Package-bundled `config.json` (backward compatible; mainly for source runs)
+
+Timeout settings (`REQUEST_TIMEOUT_MS`, `EVENT_IDLE_TIMEOUT_MS`, `EVENT_FIRST_DELTA_TIMEOUT_MS`) can also be set in the config file; precedence: env > config file > built-in defaults.
+
+
 
 ## ✨ Features
 

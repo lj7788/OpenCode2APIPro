@@ -1,3 +1,25 @@
+## 🎉 Special Contribution: npm Global Install & User-Level Config
+
+The project now supports installing globally via npm and reading user-level config from `~/.config/opencode2api/config.json`.
+
+### npm global install (available after publish)
+
+> Note: `opencode-api-pro` is not published yet. The command below will work once published. We've pre-configured `package.json` with `bin`, `files`, `publishConfig`, etc., so it's ready to publish.
+
+```bash
+npm i -g opencode-api-pro
+# Run after install
+opencode-api-pro
+```
+
+User-level config:
+```bash
+mkdir -p ~/.config/opencode2api
+cp config.json.example ~/.config/opencode2api/config.json
+```
+
+Config precedence: `OPENCODE2API_CONFIG` (env) > `./config.json` (cwd) > `~/.config/opencode2api/config.json` (XDG-aware) > package `config.json`.
+
 # 🚀 Getting Started
 
 ## 📋 Requirements

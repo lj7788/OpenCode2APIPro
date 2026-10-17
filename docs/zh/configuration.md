@@ -52,6 +52,16 @@
 | `OPENCODE2API_EVENT_FIRST_DELTA_TIMEOUT_MS` | - | `30000` | 流式响应首个 delta 的超时 |
 | `OPENCODE2API_EVENT_IDLE_TIMEOUT_MS` | - | `8000` | 流式响应的空闲超时 |
 
+## 📁 配置文件位置
+
+支持从多个位置读取 `config.json`，优先级（从高到低）：
+1. `OPENCODE2API_CONFIG`（环境变量，显式指定配置文件路径）
+2. `./config.json`（当前工作目录）
+3. `~/.config/opencode2api/config.json`（用户级配置，支持 `XDG_CONFIG_HOME`，即 `$XDG_CONFIG_HOME/opencode2api/config.json`）
+4. 安装包内的 `config.json`（向后兼容）
+
+推荐 npm 全局安装后使用 `~/.config/opencode2api/config.json`。已知 `EVENT_IDLE_TIMEOUT_MS`、`EVENT_FIRST_DELTA_TIMEOUT_MS` 可在此配置文件中配置，优先级：环境变量 > 配置文件 > 内置默认值。
+
 ## 📄 config.json 示例
 
 ```json
@@ -71,6 +81,8 @@
     "CLEANUP_INTERVAL_MS": 43200000,
     "CLEANUP_MAX_AGE_MS": 86400000,
     "REQUEST_TIMEOUT_MS": 180000,
+    "EVENT_IDLE_TIMEOUT_MS": 60000,
+    "EVENT_FIRST_DELTA_TIMEOUT_MS": 120000,
     "DEBUG": false,
     "OPENCODE_SERVER_URL": "http://127.0.0.1:10001",
     "OPENCODE_PATH": "opencode"

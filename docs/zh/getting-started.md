@@ -5,7 +5,30 @@
 - **Docker 方式**：Docker 20.10+ 与 Docker Compose
 - **本地 Node 方式**：Node.js 18+，以及 OpenCode CLI
 
-## 🏁 Docker 部署（推荐）
+## 🎉 特别贡献：支持 npm 全局安装与用户级配置
+
+本项目新增了 npm 全局安装方式，并支持从 `~/.config/opencode2api/config.json` 读取用户级配置。
+
+### npm 全局安装（发布后可用）
+
+> 注意：`opencode-api-pro` 目前尚未发布到 npm，以下命令在包发布后方可使用。已在 `package.json` 中预置发布配置。
+
+```bash
+npm i -g opencode-api-pro
+# 安装后直接启动
+opencode-api-pro
+```
+
+用户级配置：
+```bash
+mkdir -p ~/.config/opencode2api
+# 复制示例并编辑
+cp config.json.example ~/.config/opencode2api/config.json
+```
+
+配置优先级：环境变量 `OPENCODE2API_CONFIG` > `./config.json`（当前目录） > `~/.config/opencode2api/config.json`（支持 `XDG_CONFIG_HOME`） > 安装包内 `config.json`。
+
+
 
 ```bash
 git clone https://github.com/TiaraBasori/opencode2api.git

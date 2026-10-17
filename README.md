@@ -8,7 +8,43 @@
 
 简体中文 | [English](./README.en.md)
 
-把本地 [OpenCode](https://opencode.ai) 运行时转换为 OpenAI 兼容 API 网关，在任何客户端中使用不限量的 OpenCode Zen 免费模型。
+## 🎉 特别贡献：支持 npm 全局安装与用户级配置
+
+本项目新增了 npm 全局安装方式，并支持从 `~/.config/opencode2api/config.json` 读取用户级配置。
+
+### npm 全局安装（发布后可用）
+
+> 注意：`opencode-api-pro` 目前尚未发布到 npm，以下命令在包发布后方可使用。已在 `package.json` 中预置 `bin`、`files`、`publishConfig` 等发布配置，待实际发布后即可安装。
+
+```bash
+npm i -g opencode-api-pro
+```
+
+### 启动
+
+```bash
+opencode-api-pro
+```
+
+### 用户级配置
+
+推荐将配置放在用户目录，以避免影响项目源码：
+
+```bash
+mkdir -p ~/.config/opencode2api
+# 从示例复制
+cp config.json.example ~/.config/opencode2api/config.json
+```
+
+配置文件加载优先级（从高到低）：
+1. 环境变量 `OPENCODE2API_CONFIG`（显式指定配置文件路径）
+2. 当前工作目录 `./config.json`
+3. 用户级配置 `~/.config/opencode2api/config.json`（支持 XDG，若设置 `XDG_CONFIG_HOME` 则优先使用 `$XDG_CONFIG_HOME/opencode2api/config.json`）
+4. 安装包内的 `config.json`（向后兼容，主要用于源码运行）
+
+数值型超时参数（`REQUEST_TIMEOUT_MS`、`EVENT_IDLE_TIMEOUT_MS`、`EVENT_FIRST_DELTA_TIMEOUT_MS`）也可在上述配置文件中设置，优先级：环境变量 > 配置文件 > 内置默认值。
+
+
 
 ## ✨ 功能特性
 

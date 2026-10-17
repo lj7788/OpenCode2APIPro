@@ -1,6 +1,7 @@
 import { startProxy } from './src/proxy.js';
 import { parseApiKeysConfig } from './src/proxy.js';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -80,18 +81,28 @@ const defaultConfig = {
     EVENT_FIRST_DELTA_TIMEOUT_MS: parseInt(process.env.OPENCODE2API_EVENT_FIRST_DELTA_TIMEOUT_MS) || 0
 };
 
-// Load config from file
-const configPath = path.join(__dirname, 'config.json');
-let fileConfig = {};
+const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+const userConfigPath = path.join(configHome, 'opencode2api', 'config.json');
+const configCandidates = [
+    process.env.OPENCODE2API_CONFIG,
+    path.join(process.cwd(), 'config.json'),
+    userConfigPath,
+    path.join(__dirname, 'config.json')
+].filter(Boolean);
+const configPath = configCandidates.find((candidate) => fs.existsSync(candidate));
 
-if (fs.existsSync(configPath)) {
+let fileConfig = {};
+if (configPath) {
     try {
         const content = fs.readFileSync(configPath, 'utf8');
         fileConfig = JSON.parse(content);
-        console.log('[Config] Loaded from config.json');
+        console.log(`[Config] Loaded from ${configPath}`);
     } catch (err) {
-        console.error('[Config] Error parsing config.json:', err.message);
+        console.error(`[Config] Error parsing ${configPath}:`, err.message);
     }
+} else {
+    console.log('[Config] No config.json found; using built-in defaults and environment variables.');
+    console.log(`[Config] Create ${userConfigPath} to customize.`);
 }
 
 // Merge configs: env > file > default

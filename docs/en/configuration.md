@@ -52,6 +52,16 @@ Env vars use the `OPENCODE_` prefix; config.json uses the short names (see table
 | `OPENCODE2API_EVENT_FIRST_DELTA_TIMEOUT_MS` | - | `30000` | First-delta timeout for streaming |
 | `OPENCODE2API_EVENT_IDLE_TIMEOUT_MS` | - | `8000` | Idle timeout for streaming |
 
+## 📁 Config file locations
+
+Multiple locations are searched for `config.json`; precedence (highest → lowest):
+1. `OPENCODE2API_CONFIG` (env var, explicit path)
+2. `./config.json` (current working directory)
+3. `~/.config/opencode2api/config.json` (user-level config; supports `XDG_CONFIG_HOME`, i.e. `$XDG_CONFIG_HOME/opencode2api/config.json`)
+4. Package-bundled `config.json` (backward compatible)
+
+Recommended for global npm installs: use `~/.config/opencode2api/config.json`. `EVENT_IDLE_TIMEOUT_MS` and `EVENT_FIRST_DELTA_TIMEOUT_MS` can be set here; precedence: env > config file > built-in defaults.
+
 ## 📄 config.json Example
 
 ```json
@@ -71,6 +81,8 @@ Env vars use the `OPENCODE_` prefix; config.json uses the short names (see table
     "CLEANUP_INTERVAL_MS": 43200000,
     "CLEANUP_MAX_AGE_MS": 86400000,
     "REQUEST_TIMEOUT_MS": 180000,
+    "EVENT_IDLE_TIMEOUT_MS": 60000,
+    "EVENT_FIRST_DELTA_TIMEOUT_MS": 120000,
     "DEBUG": false,
     "OPENCODE_SERVER_URL": "http://127.0.0.1:10001",
     "OPENCODE_PATH": "opencode"
