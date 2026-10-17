@@ -1713,7 +1713,7 @@ export function createApp(config) {
         return { content, reasoning, toolParts };
     }
 
-    async function pollForAssistantResponse(sessionId, timeoutMs, intervalMs = DEFAULT_POLL_INTERVAL_MS) {
+    async function pollForAssistantResponse(sessionId, timeoutMs, intervalMs = DEFAULT_POLL_INTERVAL_MS, onProgress = null, initialCounts = null) {
         const pollStart = Date.now();
         const startedAt = Date.now();
         // Best-effort snapshot of the most recent in-flight assistant message. Polling
@@ -1722,6 +1722,22 @@ export function createApp(config) {
         // truncates the answer to the reasoning alone. Keep the partial around purely as
         // a timeout fallback and otherwise wait for the message to actually finish.
         let lastPartial = null;
+        // Optional incremental streaming for the polling fallback: report each newly
+        // observed slice so slow models keep emitting instead of appearing hung. The
+        // emitted* cursors (seeded from initialCounts) prevent re-emitting the SSE prefix.
+        let emittedContentLen = initialCounts?.content || 0;
+        let emittedReasoningLen = initialCounts?.reasoning || 0;
+        const reportProgress = (content, reasoning) => {
+            if (!onProgress) return;
+            if (reasoning.length > emittedReasoningLen) {
+                onProgress(reasoning.slice(emittedReasoningLen), true);
+                emittedReasoningLen = reasoning.length;
+            }
+            if (content.length > emittedContentLen) {
+                onProgress(content.slice(emittedContentLen), false);
+                emittedContentLen = content.length;
+            }
+        };
         while (Date.now() - startedAt < timeoutMs) {
             const messagesRes = await client.session.messages({ path: { id: sessionId } });
             const messages = messagesRes?.data || messagesRes || [];
@@ -1748,6 +1764,7 @@ export function createApp(config) {
                             }))
                         });
                     }
+                    reportProgress(content, reasoning);
                     if (done) {
                         if (error) {
                             console.error('[Proxy] OpenCode assistant error:', error);
@@ -2411,6 +2428,30 @@ export function createApp(config) {
                             res.write(`data: ${JSON.stringify(chunk)}\n\n`);
                         };
 
+                        // Polling fallback that streams via sendDelta; initialCounts skips the SSE prefix.
+                        const streamPollFallback = async () => {
+                            const { content: polledContent, reasoning: polledReasoning, error: polledError } =
+                                await pollForAssistantResponse(
+                                    sessionId,
+                                    REQUEST_TIMEOUT_MS,
+                                    DEFAULT_POLL_INTERVAL_MS,
+                                    sendDelta,
+                                    { content: rawStreamedContent.length, reasoning: rawStreamedReasoning.length }
+                                );
+                            if (polledError && !polledContent && !polledReasoning) {
+                                sendDelta(`[Proxy Error] ${polledError.name || 'OpenCodeError'}: ${polledError.data?.message || polledError.message || 'Unknown error'}`);
+                                return;
+                            }
+                            const remainingReasoning = polledReasoning && polledReasoning.startsWith(rawStreamedReasoning)
+                                ? polledReasoning.slice(rawStreamedReasoning.length)
+                                : polledReasoning;
+                            const remainingContent = polledContent && polledContent.startsWith(rawStreamedContent)
+                                ? polledContent.slice(rawStreamedContent.length)
+                                : polledContent;
+                            if (remainingReasoning) sendDelta(remainingReasoning, true);
+                            if (remainingContent) sendDelta(remainingContent, false);
+                        };
+
                         let collected = null;
                         let streamToolCallsSeen = false;
                         for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt += 1) {
@@ -2473,37 +2514,13 @@ export function createApp(config) {
                                 sessionId,
                                 error: collected.__error?.message
                             });
-                            const { content, reasoning, error } = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS);
-                            if (error && !content && !reasoning) {
-                                sendDelta(`[Proxy Error] ${error.name || 'OpenCodeError'}: ${error.data?.message || error.message || 'Unknown error'}`);
-                            } else {
-                                if (reasoning) sendDelta(reasoning, true);
-                                if (content) sendDelta(content, false);
-                            }
+                            await streamPollFallback();
                         } else if (collected && collected.noData) {
                             logDebug('Fallback to polling (stream)', { sessionId });
-                            const { content, reasoning, error } = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS);
-                            if (error && !content && !reasoning) {
-                                sendDelta(`[Proxy Error] ${error.name || 'OpenCodeError'}: ${error.data?.message || error.message || 'Unknown error'}`);
-                            } else {
-                                if (reasoning) sendDelta(reasoning, true);
-                                if (content) sendDelta(content, false);
-                            }
+                            await streamPollFallback();
                         } else if (collected && collected.idleTimeout) {
                             logDebug('SSE idle timeout, polling for completion', { sessionId });
-                            const { content, reasoning, error } = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS);
-                            if (error && !content && !reasoning) {
-                                sendDelta(`[Proxy Error] ${error.name || 'OpenCodeError'}: ${error.data?.message || error.message || 'Unknown error'}`);
-                            } else {
-                                const remainingReasoning = reasoning && reasoning.startsWith(rawStreamedReasoning)
-                                    ? reasoning.slice(rawStreamedReasoning.length)
-                                    : reasoning;
-                                const remainingContent = content && content.startsWith(rawStreamedContent)
-                                    ? content.slice(rawStreamedContent.length)
-                                    : content;
-                                if (remainingReasoning) sendDelta(remainingReasoning, true);
-                                if (remainingContent) sendDelta(remainingContent, false);
-                            }
+                            await streamPollFallback();
                         }
 
                         if (collected && !streamedContent && !streamedReasoning && (collected.reasoning || collected.content)) {
@@ -2513,22 +2530,22 @@ export function createApp(config) {
 
                         if (!streamedContent && !streamedReasoning) {
                             logDebug('SSE returned empty, falling back to polling', { sessionId });
-                            const { content, reasoning, error } = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS);
-                            if (error && !content && !reasoning) {
-                                sendDelta(`[Proxy Error] ${error.name || 'OpenCodeError'}: ${error.data?.message || error.message || 'Unknown error'}`);
-                            } else {
-                                if (reasoning) sendDelta(reasoning, true);
-                                if (content) sendDelta(content, false);
-                            }
+                            await streamPollFallback();
                         } else if (streamedReasoning && !streamedContent) {
                             // Reconciliation for reasoning models: the reasoning streamed but the
                             // answer text never arrived because every delta was tagged as reasoning
                             // (issue #9). The message snapshot separates the two correctly, so
                             // recover the missing answer from it instead of returning empty content.
                             logDebug('Reasoning streamed but no content, reconciling from snapshot', { sessionId });
-                            const snapshot = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS).catch(() => null);
+                            const snapshot = await pollForAssistantResponse(
+                                sessionId,
+                                REQUEST_TIMEOUT_MS,
+                                DEFAULT_POLL_INTERVAL_MS,
+                                sendDelta,
+                                { content: rawStreamedContent.length, reasoning: rawStreamedReasoning.length }
+                            ).catch(() => null);
                             if (snapshot && snapshot.content) {
-                                const remainingContent = rawStreamedContent
+                                const remainingContent = snapshot.content.startsWith(rawStreamedContent)
                                     ? snapshot.content.slice(rawStreamedContent.length)
                                     : snapshot.content;
                                 if (remainingContent) sendDelta(remainingContent, false);
@@ -3255,37 +3272,36 @@ export function createApp(config) {
                             break;
                         }
 
-                        const pollFallback = async (mode) => {
-                            const { content, reasoning, error } = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS);
-                            if (error && !content && !reasoning) {
+                        const pollFallback = async () => {
+                            const { content: polledContent, reasoning: polledReasoning, error } =
+                                await pollForAssistantResponse(
+                                    sessionId,
+                                    REQUEST_TIMEOUT_MS,
+                                    DEFAULT_POLL_INTERVAL_MS,
+                                    sendDelta,
+                                    { content: rawStreamedContent.length, reasoning: rawStreamedReasoning.length }
+                                );
+                            if (error && !polledContent && !polledReasoning) {
                                 logDebug('Anthropic stream fallback error', { error: error.message });
                                 return;
                             }
-                            if (mode === 'idleTimeout') {
-                                // Same guard as chat completions: the SSE pipe may have
-                                // delivered a prefix before going idle, so only the
-                                // remainder is sent to avoid duplicating text.
-                                const remainingReasoning = reasoning && reasoning.startsWith(rawStreamedReasoning)
-                                    ? reasoning.slice(rawStreamedReasoning.length)
-                                    : reasoning;
-                                const remainingContent = content && content.startsWith(rawStreamedContent)
-                                    ? content.slice(rawStreamedContent.length)
-                                    : content;
-                                if (remainingReasoning) sendDelta(remainingReasoning, true);
-                                if (remainingContent) sendDelta(remainingContent, false);
-                                return;
-                            }
-                            if (reasoning) sendDelta(reasoning, true);
-                            if (content) sendDelta(content, false);
+                            const remainingReasoning = polledReasoning && polledReasoning.startsWith(rawStreamedReasoning)
+                                ? polledReasoning.slice(rawStreamedReasoning.length)
+                                : polledReasoning;
+                            const remainingContent = polledContent && polledContent.startsWith(rawStreamedContent)
+                                ? polledContent.slice(rawStreamedContent.length)
+                                : polledContent;
+                            if (remainingReasoning) sendDelta(remainingReasoning, true);
+                            if (remainingContent) sendDelta(remainingContent, false);
                         };
                         let didFullPoll = false;
                         if (collected && (collected.__error || collected.noData)) {
                             logDebug('Anthropic SSE fallback to polling', { sessionId });
                             didFullPoll = true;
-                            await pollFallback('full');
+                            await pollFallback();
                         } else if (collected && collected.idleTimeout && (streamedContent || streamedReasoning || streamedToolCalls.length > 0)) {
                             logDebug('Anthropic SSE idle timeout, polling for remainder', { sessionId });
-                            await pollFallback('idleTimeout');
+                            await pollFallback();
                         }
                         if (collected && !rawStreamedContent && !rawStreamedReasoning && (collected.reasoning || collected.content)) {
                             if (collected.reasoning) sendDelta(collected.reasoning, true);
@@ -3293,12 +3309,19 @@ export function createApp(config) {
                         }
                         if (!didFullPoll && !rawStreamedContent && !rawStreamedReasoning && streamedToolCalls.length === 0) {
                             logDebug('Anthropic SSE returned empty, falling back to polling', { sessionId });
-                            await pollFallback('full');
+                            didFullPoll = true;
+                            await pollFallback();
                         } else if (rawStreamedReasoning && !rawStreamedContent && streamedToolCalls.length === 0) {
                             logDebug('Anthropic reasoning streamed without content, reconciling from snapshot', { sessionId });
-                            const snapshot = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS).catch(() => null);
+                            const snapshot = await pollForAssistantResponse(
+                                sessionId,
+                                REQUEST_TIMEOUT_MS,
+                                DEFAULT_POLL_INTERVAL_MS,
+                                sendDelta,
+                                { content: rawStreamedContent.length, reasoning: rawStreamedReasoning.length }
+                            ).catch(() => null);
                             if (snapshot && snapshot.content) {
-                                const remainingContent = rawStreamedContent
+                                const remainingContent = snapshot.content.startsWith(rawStreamedContent)
                                     ? snapshot.content.slice(rawStreamedContent.length)
                                     : snapshot.content;
                                 if (remainingContent) sendDelta(remainingContent, false);
@@ -4268,12 +4291,30 @@ export function createApp(config) {
                 }
 
                 if (!content && !reasoning) {
-                    const polled = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS);
+                    const polled = await pollForAssistantResponse(
+                        sessionId,
+                        REQUEST_TIMEOUT_MS,
+                        DEFAULT_POLL_INTERVAL_MS,
+                        sendResponsesDelta,
+                        { content: rawContent.length, reasoning: rawReasoning.length }
+                    );
                     if (polled.error && !polled.content && !polled.reasoning) throw polled.error;
-                    if (polled.reasoning) sendResponsesDelta(polled.reasoning, true);
-                    if (polled.content) sendResponsesDelta(polled.content, false);
+                    const remainingReasoning = polled.reasoning && polled.reasoning.startsWith(rawReasoning)
+                        ? polled.reasoning.slice(rawReasoning.length)
+                        : polled.reasoning;
+                    const remainingContent = polled.content && polled.content.startsWith(rawContent)
+                        ? polled.content.slice(rawContent.length)
+                        : polled.content;
+                    if (remainingReasoning) sendResponsesDelta(remainingReasoning, true);
+                    if (remainingContent) sendResponsesDelta(remainingContent, false);
                 } else if (collected && collected.idleTimeout) {
-                    const polled = await pollForAssistantResponse(sessionId, REQUEST_TIMEOUT_MS);
+                    const polled = await pollForAssistantResponse(
+                        sessionId,
+                        REQUEST_TIMEOUT_MS,
+                        DEFAULT_POLL_INTERVAL_MS,
+                        sendResponsesDelta,
+                        { content: rawContent.length, reasoning: rawReasoning.length }
+                    );
                     const remainingReasoning = polled.reasoning && polled.reasoning.startsWith(rawReasoning)
                         ? polled.reasoning.slice(rawReasoning.length)
                         : polled.reasoning;
